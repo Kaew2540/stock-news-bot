@@ -2,97 +2,215 @@ import yfinance as yf
 import requests
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import pytz
 
-# --- ตั้งค่าตรงนี้ ---
-PORTFOLIO = ['NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NFLX', 'MA', 'MELI', 'RKLB', 'RBRK', 'ASML', 'LLY', 'UNH', 'PLTR', 'CRWD', 'AVGO', 'DUOL'] # แก้เป็นหุ้นที่คุณถือ
+# ==================== ตั้งค่าทั้งหมดตรงนี้ ====================
+PORTFOLIO = ['NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NFLX', 'MA', 'MELI', 'RKLB', 'RBRK', 'ASML', 'LLY', 'UNH', 'PLTR', 'CRWD', 'AVGO', 'DUOL']
 
-# คำสำคัญที่ถือว่ากระทบราคาหุ้นเมกาแรงๆ
-HIGH_IMPACT_KEYWORDS = [
-    'earnings', 'earnings beat', 'earnings miss', 'guidance', 'raises guidance', 'cuts guidance',
-    'upgrade', 'downgrade', 'price target', 'initiated coverage',
-    'lawsuit', 'investigation', 'SEC', 'DOJ', 'settlement',
-    'merger', 'acquisition', 'buyout', 'spinoff',
-    'CEO', 'CFO', 'resigns', 'appointed',
-    'FDA approval', 'FDA rejection', 'clinical trial',
-    'bankruptcy', 'chapter 11', 'delisting',
-    'stock split', 'dividend', 'buyback',
-    'contract', 'deal', 'partnership'
-]
+# Keywords แบ่งระดับความแรง 3 Tier
+TIER_1_KEYWORDS = ['bankruptcy', 'chapter 11', 'delisting', 'SEC investigation', 'DOJ', 'fraud', 'halt']
+TIER_2_KEYWORDS = ['earnings', 'guidance', 'raises guidance', 'cuts guidance', 'upgrade', 'downgrade',
+                   'price target', 'lawsuit', 'merger', 'acquisition', 'buyout', 'CEO resigns']
+TIER_3_KEYWORDS = ['dividend', 'stock split', 'buyback', 'contract', 'partnership', 'FDA approval', 'clinical trial']
+
+# คะแนน Sentiment ขั้นต่ำที่จะส่ง Finnhub: 0.35 = บวก/ลบชัดเจนมาก, 0.15 = มีทิศทาง
+MIN_SENTIMENT_SCORE = 0.15
+
+# ข่าวเก่าเกินกี่ชั่วโมงไม่เอา
+NEWS_MAX_AGE_HOURS = 24
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
+FINNHUB_KEY = os.environ.get('FINNHUB_KEY') # ฟรี: finnhub.io สมัครเอา API Key มาใส่ใน Secrets
 SENT_FILE = 'sent_news.json'
+DAILY_SUMMARY_FILE = 'daily_summary.json'
 
-def load_sent_news():
+# ============================================================
+
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+def load_json_file(filename, default):
     try:
-        with open(SENT_FILE, 'r') as f:
-            return set(json.load(f))
+        with open(filename, 'r') as f:
+            return json.load(f)
     except FileNotFoundError:
-        return set()
+        return default
 
-def save_sent_news(sent_news):
-    # เก็บแค่ 200 ลิงก์ล่าสุด กันไฟล์ใหญ่เกิน
-    with open(SENT_FILE, 'w') as f:
-        json.dump(list(sent_news)[-200:], f)
+def save_json_file(filename, data):
+    with open(filename, 'w') as f:
+        json.dump(data, f, indent=2)
 
-def send_telegram_alert(ticker, title, link, published_time):
-    message = f"🚨 *{ticker} News Alert*\n\n{title}\n\n🕒 {published_time}\n\n🔗 {link}"
+def get_tier_emoji(title):
+    title_lower = title.lower()
+    if any(kw.lower() in title_lower for kw in TIER_1_KEYWORDS):
+        return '🚨🚨', 'CRITICAL'
+    if any(kw.lower() in title_lower for kw in TIER_2_KEYWORDS):
+        return '🚨', 'HIGH'
+    if any(kw.lower() in title_lower for kw in TIER_3_KEYWORDS):
+        return '⚠️', 'MEDIUM'
+    return None, None
+
+def get_sentiment_emoji(score):
+    if score > 0.35: return '🟢🟢'
+    if score > 0.15: return '🟢'
+    if score < -0.35: return '🔴🔴'
+    if score < -0.15: return '🔴'
+    return '⚪️'
+
+def get_stock_price_info(ticker):
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        price = info.get('currentPrice') or info.get('regularMarketPrice', 0)
+        prev_close = info.get('previousClose', 0)
+        if price and prev_close:
+            change_pct = ((price - prev_close) / prev_close) * 100
+            return f"${price:.2f} ({change_pct:+.2f}%)"
+        return f"${price:.2f}" if price else "N/A"
+    except Exception as e:
+        log(f"Price fetch error {ticker}: {e}")
+        return "N/A"
+
+def fetch_yahoo_news(ticker):
+    news_items = []
+    try:
+        for item in yf.Ticker(ticker).news:
+            news_items.append({
+                'title': item.get('title', ''),
+                'url': item.get('link', ''),
+                'time': item.get('providerPublishTime', 0),
+                'source': item.get('publisher', 'Yahoo')
+            })
+    except Exception as e:
+        log(f"Yahoo error {ticker}: {e}")
+    return news_items
+
+def fetch_finnhub_news(ticker):
+    if not FINNHUB_KEY:
+        return []
+    news_items = []
+    try:
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        from_date = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
+        url = f"https://finnhub.io/api/v1/company-news"
+        params = {'symbol': ticker, 'from': from_date, 'to': to_date, 'token': FINNHUB_KEY}
+        r = requests.get(url, params=params, timeout=10)
+        for item in r.json():
+            news_items.append({
+                'title': item.get('headline', ''),
+                'url': item.get('url', ''),
+                'time': item.get('datetime', 0),
+                'source': item.get('source', 'Finnhub'),
+                'sentiment': item.get('sentiment', 0) # Finnhub มี sentiment ให้เลย
+            })
+    except Exception as e:
+        log(f"Finnhub error {ticker}: {e}")
+    return news_items
+
+def send_telegram(message, disable_preview=False):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         'chat_id': CHAT_ID,
         'text': message,
         'parse_mode': 'Markdown',
-        'disable_web_page_preview': False
+        'disable_web_page_preview': disable_preview
     }
     try:
         r = requests.post(url, data=payload, timeout=10)
         r.raise_for_status()
-        print(f"Sent alert for {ticker}")
+        return True
     except Exception as e:
-        print(f"Failed to send Telegram: {e}")
+        log(f"Telegram send failed: {e}")
+        return False
 
-def check_ticker_news(ticker, sent_news):
-    try:
-        stock = yf.Ticker(ticker)
-        news_list = stock.news
-        
-        for item in news_list[:7]: # เช็ค 7 ข่าวล่าสุด กันพลาด
-            title = item.get('title', '').strip()
-            link = item.get('link', '')
-            if not title or not link or link in sent_news:
-                continue
+def process_ticker(ticker, sent_urls, daily_log):
+    log(f"Checking {ticker}")
+    all_news = fetch_yahoo_news(ticker) + fetch_finnhub_news(ticker)
 
-            # แปลงเวลาข่าวเป็นเวลาอ่านง่าย
-            pub_timestamp = item.get('providerPublishTime', 0)
-            pub_dt = datetime.fromtimestamp(pub_timestamp)
-            # เอาเฉพาะข่าวไม่เกิน 24 ชม กันข่าวเก่าเด้งมา
-            if datetime.now() - pub_dt > timedelta(days=1):
-                continue
-                
-            pub_str = pub_dt.strftime('%d %b %Y %H:%M')
+    # รวมข่าวซ้ำจาก 2 แหล่ง โดยใช้ url เป็น key
+    unique_news = {item['url']: item for item in all_news if item.get('url')}.values()
 
-            # เช็คว่ามี keyword สำคัญไหม
-            if any(keyword.lower() in title.lower() for keyword in HIGH_IMPACT_KEYWORDS):
-                send_telegram_alert(ticker, title, link, pub_str)
-                sent_news.add(link)
-                
-    except Exception as e:
-        print(f"Error checking {ticker}: {e}")
+    for item in unique_news:
+        url = item['url']
+        title = item['title'].strip()
+        if not title or url in sent_urls:
+            continue
+
+        # เช็คอายุข่าว
+        pub_dt = datetime.fromtimestamp(item['time'])
+        if datetime.now() - pub_dt > timedelta(hours=NEWS_MAX_AGE_HOURS):
+            continue
+
+        # เช็ค Tier ของข่าว
+        tier_emoji, tier_name = get_tier_emoji(title)
+        if not tier_emoji:
+            continue
+
+        # เช็ค Sentiment ถ้ามี
+        sentiment_score = item.get('sentiment', 0)
+        if abs(sentiment_score) < MIN_SENTIMENT_SCORE and tier_name == 'MEDIUM':
+            continue # ข่าว tier 3 ต้อง sentiment แรงหน่อยถึงจะส่ง
+
+        sent_emoji = get_sentiment_emoji(sentiment_score)
+        price_info = get_stock_price_info(ticker)
+        time_str = pub_dt.strftime('%d %b %H:%M')
+
+        msg = f"{tier_emoji} *{ticker}* {sent_emoji}\n"
+        msg += f"💵 {price_info}\n\n"
+        msg += f"*{title}*\n\n"
+        msg += f"📰 {item['source']} | 🕒 {time_str}\n"
+        msg += f"🔗 {url}"
+
+        if send_telegram(msg):
+            sent_urls.add(url)
+            # เก็บ log สำหรับสรุปท้ายวัน
+            if ticker not in daily_log:
+                daily_log[ticker] = []
+            daily_log[ticker].append({'title': title, 'tier': tier_name, 'sentiment': sentiment_score})
+            log(f"Sent: {ticker} - {title[:50]}...")
+
+def send_daily_summary(daily_log):
+    ny_tz = pytz.timezone('America/New_York')
+    ny_time = datetime.now(ny_tz)
+
+    # ส่งสรุปตอน 16:05 น. เวลานิวยอร์ก = ตลาดปิดแล้ว
+    if ny_time.hour == 16 and ny_time.minute < 15:
+        if not daily_log:
+            send_telegram("📊 *Daily Summary*\n\nวันนี้ไม่มีข่าวสำคัญในพอร์ตของคุณ")
+        else:
+            msg = "📊 *Daily Summary - Market Close*\n\n"
+            for ticker, news_list in daily_log.items():
+                msg += f"*{ticker}* - {len(news_list)} ข่าว\n"
+                for news in news_list[:3]: # แสดงแค่ 3 ข่าวแรกต่อตัว
+                    sent_emoji = get_sentiment_emoji(news['sentiment'])
+                    msg += f" {sent_emoji} {news['title'][:60]}...\n"
+                msg += "\n"
+            send_telegram(msg, disable_preview=True)
+        return True # บอกว่าให้เคลียร์ log
+    return False
 
 def main():
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("Missing TELEGRAM_TOKEN or CHAT_ID in environment")
+        log("FATAL: Missing TELEGRAM_TOKEN or CHAT_ID")
         return
-        
-    sent_news = load_sent_news()
-    print(f"Checking news for {len(PORTFOLIO)} tickers. Already sent: {len(sent_news)} items.")
-    
+
+    sent_urls = set(load_json_file(SENT_FILE, []))
+    daily_log = load_json_file(DAILY_SUMMARY_FILE, {})
+    log(f"Start run. Portfolio: {len(PORTFOLIO)} tickers. Sent history: {len(sent_urls)} urls.")
+
     for ticker in PORTFOLIO:
-        check_ticker_news(ticker, sent_news)
-        
-    save_sent_news(sent_news)
-    print("Run complete.")
+        process_ticker(ticker, sent_urls, daily_log)
+
+    # เช็คว่าถึงเวลาส่งสรุปไหม
+    if send_daily_summary(daily_log):
+        daily_log = {} # เคลียร์ log วันนี้
+        log("Daily summary sent. Log cleared.")
+
+    save_json_file(SENT_FILE, list(sent_urls)[-500:]) # เก็บ 500 ลิงก์ล่าสุด
+    save_json_file(DAILY_SUMMARY_FILE, daily_log)
+    log("Run complete.")
 
 if __name__ == "__main__":
     main()
