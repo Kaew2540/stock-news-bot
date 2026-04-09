@@ -195,7 +195,7 @@ def main():
     if not TELEGRAM_TOKEN or not CHAT_ID:
         log("FATAL: Missing TELEGRAM_TOKEN or CHAT_ID")
         return
-
+send_telegram("✅ *บอทออนไลน์แล้ว* ระบบ Pro ทำงานปกติ รอตรวจข่าวทุก 15 นาที")
     sent_urls = set(load_json_file(SENT_FILE, []))
     daily_log = load_json_file(DAILY_SUMMARY_FILE, {})
     log(f"Start run. Portfolio: {len(PORTFOLIO)} tickers. Sent history: {len(sent_urls)} urls.")
