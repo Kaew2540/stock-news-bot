@@ -1,38 +1,39 @@
-name: Run Stock News Alert
+name: Pro Stock News Alert
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # รันทุก 15 นาที UTC
-  workflow_dispatch: # ปุ่มกดรันเองในหน้า Actions
+    - cron: '*/10 * * * *' # เช็คข่าวทุก 10 นาที
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # ให้บอทเขียนไฟล์ sent_news.json กลับได้
-    
+      contents: write
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Install dependencies
-        run: pip install yfinance requests
-        
+        run: pip install yfinance requests pytz
+
       - name: Run script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python us_stock_alert.py
-        
-      - name: Commit sent news file
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+        run: python us_stock_alert_pro.py
+
+      - name: Commit files
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add sent_news.json
-          git diff --staged --quiet || git commit -m "Update sent news list"
+          git add sent_news.json daily_summary.json
+          git diff --staged --quiet || git commit -m "Update news data"
           git push
