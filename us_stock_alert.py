@@ -22,7 +22,7 @@ NEWS_MAX_AGE_HOURS = 24
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
-FINNHUB_KEY = os.environ.get('FINNHUB_KEY') # ฟรี: finnhub.io สมัครเอา API Key มาใส่ใน Secrets
+FINNHUB_KEY = os.environ.get('d6e1jphr01qmepi1etq0d6e1jphr01qmepi1etqg') # ฟรี: finnhub.io สมัครเอา API Key มาใส่ใน Secrets
 SENT_FILE = 'sent_news.json'
 DAILY_SUMMARY_FILE = 'daily_summary.json'
 
