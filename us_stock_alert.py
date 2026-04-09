@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta
 
 # --- ตั้งค่าตรงนี้ ---
-PORTFOLIO = ['NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD', 'GOOGL', 'META'] # แก้เป็นหุ้นที่คุณถือ
+PORTFOLIO = ['NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NFLX', 'MA', 'MELI', 'RKLB', 'RBRK', 'ASML', 'LLY', 'UNH', 'PLTR', 'CRWD', 'AVGO', 'DUOL'] # แก้เป็นหุ้นที่คุณถือ
 
 # คำสำคัญที่ถือว่ากระทบราคาหุ้นเมกาแรงๆ
 HIGH_IMPACT_KEYWORDS = [
