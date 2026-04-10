@@ -31,8 +31,8 @@ jobs:
         run: python us_stock_alert_pro.py
 
       - name: Commit files
-        if: always()
-        run: |
+          if: always()
+          run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git pull --rebase origin main || true
