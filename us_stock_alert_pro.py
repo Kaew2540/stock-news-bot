@@ -22,14 +22,17 @@ NEWS_MAX_AGE_HOURS = 24
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
-FINNHUB_KEY = os.environ.get('d6e1jphr01qmepi1etq0d6e1jphr01qmepi1etqg') # ฟรี: finnhub.io สมัครเอา API Key มาใส่ใน Secrets
+FINNHUB_KEY = os.environ.get('FINNHUB_KEY') # แก้แล้ว: ดึงจาก Secrets ชื่อ FINNHUB_KEY
 SENT_FILE = 'sent_news.json'
 DAILY_SUMMARY_FILE = 'daily_summary.json'
 
 # ============================================================
 
+def now_th():
+    return datetime.now(pytz.timezone('Asia/Bangkok'))
+
 def log(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+    print(f"[{now_th().strftime('%H:%M:%S')}] {msg}")
 
 def load_json_file(filename, default):
     try:
@@ -103,7 +106,7 @@ def fetch_finnhub_news(ticker):
                 'url': item.get('url', ''),
                 'time': item.get('datetime', 0),
                 'source': item.get('source', 'Finnhub'),
-                'sentiment': item.get('sentiment', 0) # Finnhub มี sentiment ให้เลย
+                'sentiment': item.get('sentiment', 0)
             })
     except Exception as e:
         log(f"Finnhub error {ticker}: {e}")
@@ -128,8 +131,6 @@ def send_telegram(message, disable_preview=False):
 def process_ticker(ticker, sent_urls, daily_log):
     log(f"Checking {ticker}")
     all_news = fetch_yahoo_news(ticker) + fetch_finnhub_news(ticker)
-
-    # รวมข่าวซ้ำจาก 2 แหล่ง โดยใช้ url เป็น key
     unique_news = {item['url']: item for item in all_news if item.get('url')}.values()
 
     for item in unique_news:
@@ -138,20 +139,17 @@ def process_ticker(ticker, sent_urls, daily_log):
         if not title or url in sent_urls:
             continue
 
-        # เช็คอายุข่าว
         pub_dt = datetime.fromtimestamp(item['time'])
         if datetime.now() - pub_dt > timedelta(hours=NEWS_MAX_AGE_HOURS):
             continue
 
-        # เช็ค Tier ของข่าว
         tier_emoji, tier_name = get_tier_emoji(title)
         if not tier_emoji:
             continue
 
-        # เช็ค Sentiment ถ้ามี
         sentiment_score = item.get('sentiment', 0)
         if abs(sentiment_score) < MIN_SENTIMENT_SCORE and tier_name == 'MEDIUM':
-            continue # ข่าว tier 3 ต้อง sentiment แรงหน่อยถึงจะส่ง
+            continue
 
         sent_emoji = get_sentiment_emoji(sentiment_score)
         price_info = get_stock_price_info(ticker)
@@ -165,7 +163,6 @@ def process_ticker(ticker, sent_urls, daily_log):
 
         if send_telegram(msg):
             sent_urls.add(url)
-            # เก็บ log สำหรับสรุปท้ายวัน
             if ticker not in daily_log:
                 daily_log[ticker] = []
             daily_log[ticker].append({'title': title, 'tier': tier_name, 'sentiment': sentiment_score})
@@ -175,7 +172,6 @@ def send_daily_summary(daily_log):
     ny_tz = pytz.timezone('America/New_York')
     ny_time = datetime.now(ny_tz)
 
-    # ส่งสรุปตอน 16:05 น. เวลานิวยอร์ก = ตลาดปิดแล้ว
     if ny_time.hour == 16 and ny_time.minute < 15:
         if not daily_log:
             send_telegram("📊 *Daily Summary*\n\nวันนี้ไม่มีข่าวสำคัญในพอร์ตของคุณ")
@@ -183,19 +179,23 @@ def send_daily_summary(daily_log):
             msg = "📊 *Daily Summary - Market Close*\n\n"
             for ticker, news_list in daily_log.items():
                 msg += f"*{ticker}* - {len(news_list)} ข่าว\n"
-                for news in news_list[:3]: # แสดงแค่ 3 ข่าวแรกต่อตัว
+                for news in news_list[:3]:
                     sent_emoji = get_sentiment_emoji(news['sentiment'])
                     msg += f" {sent_emoji} {news['title'][:60]}...\n"
                 msg += "\n"
             send_telegram(msg, disable_preview=True)
-        return True # บอกว่าให้เคลียร์ log
+        return True
     return False
 
 def main():
     if not TELEGRAM_TOKEN or not CHAT_ID:
         log("FATAL: Missing TELEGRAM_TOKEN or CHAT_ID")
         return
-send_telegram("✅ *บอทออนไลน์แล้ว* ระบบ Pro ทำงานปกติ รอตรวจข่าวทุก 15 นาที")
+
+    # บรรทัดเทส ย่อหน้า 4 space ตรงกับบรรทัดอื่น
+    send_telegram("✅ *บอทออนไลน์แล้ว* ระบบ Pro ทำงานปกติ รอตรวจข่าวทุก 10 นาที")
+
+    # ย่อหน้า 4 space เท่ากันทุกบรรทัดใน main()
     sent_urls = set(load_json_file(SENT_FILE, []))
     daily_log = load_json_file(DAILY_SUMMARY_FILE, {})
     log(f"Start run. Portfolio: {len(PORTFOLIO)} tickers. Sent history: {len(sent_urls)} urls.")
@@ -203,12 +203,11 @@ send_telegram("✅ *บอทออนไลน์แล้ว* ระบบ Pro
     for ticker in PORTFOLIO:
         process_ticker(ticker, sent_urls, daily_log)
 
-    # เช็คว่าถึงเวลาส่งสรุปไหม
     if send_daily_summary(daily_log):
-        daily_log = {} # เคลียร์ log วันนี้
+        daily_log = {}
         log("Daily summary sent. Log cleared.")
 
-    save_json_file(SENT_FILE, list(sent_urls)[-500:]) # เก็บ 500 ลิงก์ล่าสุด
+    save_json_file(SENT_FILE, list(sent_urls)[-500:])
     save_json_file(DAILY_SUMMARY_FILE, daily_log)
     log("Run complete.")
 
