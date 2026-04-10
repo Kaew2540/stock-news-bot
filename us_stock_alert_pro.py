@@ -22,7 +22,7 @@ NEWS_MAX_AGE_HOURS = 24
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
-FINNHUB_KEY = os.environ.get('FINNHUB_KEY') # แก้แล้ว: ดึงจาก Secrets ชื่อ FINNHUB_KEY
+FINNHUB_KEY = os.environ.get('FINNHUB_KEY')
 SENT_FILE = 'sent_news.json'
 DAILY_SUMMARY_FILE = 'daily_summary.json'
 
@@ -192,10 +192,7 @@ def main():
         log("FATAL: Missing TELEGRAM_TOKEN or CHAT_ID")
         return
 
-    # บรรทัดเทส ย่อหน้า 4 space ตรงกับบรรทัดอื่น
     send_telegram("✅ *บอทออนไลน์แล้ว* ระบบ Pro ทำงานปกติ รอตรวจข่าวทุก 10 นาที")
-
-    # ย่อหน้า 4 space เท่ากันทุกบรรทัดใน main()
     sent_urls = set(load_json_file(SENT_FILE, []))
     daily_log = load_json_file(DAILY_SUMMARY_FILE, {})
     log(f"Start run. Portfolio: {len(PORTFOLIO)} tickers. Sent history: {len(sent_urls)} urls.")
