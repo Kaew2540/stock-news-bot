@@ -31,12 +31,12 @@ jobs:
         run: python us_stock_alert_pro.py
 
       - name: Commit files
-          if: always()
-          run: |
+        if: always()
+        continue-on-error: true
+        run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git pull --rebase origin main || true
           git add sent_news.json daily_summary.json
           git diff --staged --quiet || git commit -m "Update news data"
           git push || echo "Push skipped due to conflict"
-        continue-on-error: true
