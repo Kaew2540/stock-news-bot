@@ -1,18 +1,33 @@
-import yfinance as yf
-import requests
-import os
 import json
+import os
 from datetime import datetime, timedelta, timezone
+
 import pytz
+import requests
+import yfinance as yf
+
 
 # ==================== ตั้งค่าทั้งหมดตรงนี้ ====================
-PORTFOLIO = ['NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NFLX', 'MA', 'MELI', 'RKLB', 'RBRK', 'ASML', 'LLY', 'UNH', 'PLTR', 'CRWD', 'AVGO', 'DUOL']
+PORTFOLIO = [
+    'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NFLX', 'MA', 
+    'MELI', 'RKLB', 'RBRK', 'ASML', 'LLY', 'UNH', 'PLTR', 
+    'CRWD', 'AVGO', 'DUOL'
+]
 
 # Keywords แบ่งระดับความแรง 3 Tier
-TIER_1_KEYWORDS = ['bankruptcy', 'chapter 11', 'delisting', 'SEC investigation', 'DOJ', 'fraud', 'halt']
-TIER_2_KEYWORDS = ['earnings', 'guidance', 'raises guidance', 'cuts guidance', 'upgrade', 'downgrade',
-                   'price target', 'lawsuit', 'merger', 'acquisition', 'buyout', 'CEO resigns']
-TIER_3_KEYWORDS = ['dividend', 'stock split', 'buyback', 'contract', 'partnership', 'FDA approval', 'clinical trial']
+TIER_1_KEYWORDS = [
+    'bankruptcy', 'chapter 11', 'delisting', 
+    'SEC investigation', 'DOJ', 'fraud', 'halt'
+]
+TIER_2_KEYWORDS = [
+    'earnings', 'guidance', 'raises guidance', 'cuts guidance', 
+    'upgrade', 'downgrade', 'price target', 'lawsuit', 'merger', 
+    'acquisition', 'buyout', 'CEO resigns'
+]
+TIER_3_KEYWORDS = [
+    'dividend', 'stock split', 'buyback', 'contract', 
+    'partnership', 'FDA approval', 'clinical trial'
+]
 
 # คะแนน Sentiment ขั้นต่ำที่จะส่ง Finnhub: 0.35 = บวก/ลบชัดเจนมาก, 0.15 = มีทิศทาง
 MIN_SENTIMENT_SCORE = 0.15
@@ -22,28 +37,33 @@ NEWS_MAX_AGE_HOURS = 24
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
-FINNHUB_KEY = os.environ.get('FINNHUB_KEY')
+FINNHUB_KEY = os.environ.get('d6e1jphr01qmepi1etq0d6e1jphr01qmepi1etqg')
 SENT_FILE = 'sent_news.json'
 DAILY_SUMMARY_FILE = 'daily_summary.json'
 
 # ============================================================
 
+
 def now_th():
     return datetime.now(pytz.timezone('Asia/Bangkok'))
+
 
 def log(msg):
     print(f"[{now_th().strftime('%H:%M:%S')}] {msg}")
 
+
 def load_json_file(filename, default):
     try:
-        with open(filename, 'r') as f:
+        with open(filename, 'r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
         return default
 
+
 def save_json_file(filename, data):
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=2)
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
 
 def get_tier_emoji(title):
     title_lower = title.lower()
@@ -55,12 +75,18 @@ def get_tier_emoji(title):
         return '⚠️', 'MEDIUM'
     return None, None
 
+
 def get_sentiment_emoji(score):
-    if score > 0.35: return '🟢🟢'
-    if score > 0.15: return '🟢'
-    if score < -0.35: return '🔴🔴'
-    if score < -0.15: return '🔴'
+    if score > 0.35:
+        return '🟢🟢'
+    if score > 0.15:
+        return '🟢'
+    if score < -0.35:
+        return '🔴🔴'
+    if score < -0.15:
+        return '🔴'
     return '⚪️'
+
 
 def get_stock_price_info(ticker):
     try:
@@ -68,13 +94,16 @@ def get_stock_price_info(ticker):
         info = t.info
         price = info.get('currentPrice') or info.get('regularMarketPrice', 0)
         prev_close = info.get('previousClose', 0)
+        
         if price and prev_close:
             change_pct = ((price - prev_close) / prev_close) * 100
             return f"${price:.2f} ({change_pct:+.2f}%)"
+            
         return f"${price:.2f}" if price else "N/A"
     except Exception as e:
         log(f"Price fetch error {ticker}: {e}")
         return "N/A"
+
 
 def fetch_yahoo_news(ticker):
     news_items = []
@@ -90,16 +119,25 @@ def fetch_yahoo_news(ticker):
         log(f"Yahoo error {ticker}: {e}")
     return news_items
 
+
 def fetch_finnhub_news(ticker):
     if not FINNHUB_KEY:
         return []
+        
     news_items = []
     try:
         to_date = datetime.now().strftime('%Y-%m-%d')
         from_date = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
-        url = f"https://finnhub.io/api/v1/company-news"
-        params = {'symbol': ticker, 'from': from_date, 'to': to_date, 'token': FINNHUB_KEY}
+        url = "https://finnhub.io/api/v1/company-news"
+        params = {
+            'symbol': ticker, 
+            'from': from_date, 
+            'to': to_date, 
+            'token': FINNHUB_KEY
+        }
         r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()  # ป้องกันกรณี API ยิงไม่สำเร็จ
+        
         for item in r.json():
             news_items.append({
                 'title': item.get('headline', ''),
@@ -111,6 +149,7 @@ def fetch_finnhub_news(ticker):
     except Exception as e:
         log(f"Finnhub error {ticker}: {e}")
     return news_items
+
 
 def send_telegram(message, disable_preview=False):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -128,14 +167,18 @@ def send_telegram(message, disable_preview=False):
         log(f"Telegram send failed: {e}")
         return False
 
+
 def process_ticker(ticker, sent_urls, daily_log):
     log(f"Checking {ticker}")
     all_news = fetch_yahoo_news(ticker) + fetch_finnhub_news(ticker)
+    
+    # Deduplicate by URL
     unique_news = {item['url']: item for item in all_news if item.get('url')}.values()
 
     for item in unique_news:
         url = item['url']
         title = item['title'].strip()
+        
         if not title or url in sent_urls:
             continue
 
@@ -165,8 +208,13 @@ def process_ticker(ticker, sent_urls, daily_log):
             sent_urls.add(url)
             if ticker not in daily_log:
                 daily_log[ticker] = []
-            daily_log[ticker].append({'title': title, 'tier': tier_name, 'sentiment': sentiment_score})
+            daily_log[ticker].append({
+                'title': title, 
+                'tier': tier_name, 
+                'sentiment': sentiment_score
+            })
             log(f"Sent: {ticker} - {title[:50]}...")
+
 
 def send_daily_summary(daily_log):
     ny_tz = pytz.timezone('America/New_York')
@@ -187,11 +235,14 @@ def send_daily_summary(daily_log):
         return True
     return False
 
+
 def main():
     if not TELEGRAM_TOKEN or not CHAT_ID:
         log("FATAL: Missing TELEGRAM_TOKEN or CHAT_ID")
         return
+        
     send_telegram("✅ *บอทออนไลน์แล้ว* ระบบ Pro ทำงานปกติ รอตรวจข่าวทุก 10 นาที")
+    
     sent_urls = set(load_json_file(SENT_FILE, []))
     daily_log = load_json_file(DAILY_SUMMARY_FILE, {})
     log(f"Start run. Portfolio: {len(PORTFOLIO)} tickers. Sent history: {len(sent_urls)} urls.")
@@ -206,6 +257,7 @@ def main():
     save_json_file(SENT_FILE, list(sent_urls)[-500:])
     save_json_file(DAILY_SUMMARY_FILE, daily_log)
     log("Run complete.")
+
 
 if __name__ == "__main__":
     main()
