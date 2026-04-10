@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
+    
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -30,12 +30,13 @@ jobs:
           FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
         run: python us_stock_alert_pro.py
 
-     - name: Commit files
-  run: |
-    git config --local user.email "action@github.com"
-    git config --local user.name "GitHub Action"
-    git add sent_news.json daily_summary.json
-    git diff --staged --quiet || git commit -m "Update news data"
-    git pull --rebase origin main || true
-    git push || echo "Push failed, skip"
-  continue-on-error: true
+      - name: Commit files
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git pull --rebase origin main || true
+          git add sent_news.json daily_summary.json
+          git diff --staged --quiet || git commit -m "Update news data"
+          git push || echo "Push skipped due to conflict"
+        continue-on-error: true
